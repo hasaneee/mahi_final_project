@@ -3,6 +3,7 @@
 #include "hw_memmap.h"
 #include "hw_gpio.h"
 #include "pin.h"
+#include "adc.h"
 #include "gpio.h"
 #include "prcm.h"
 
@@ -10,10 +11,11 @@
  * Keep optional peripheral pinmux disabled unless that hardware is in use.
  * Touching extra pins can interfere with NWP bring-up on some CC3200 boards.
  */
-#define PINMUX_ENABLE_IR      1
-#define PINMUX_ENABLE_OLED    1
+#define PINMUX_ENABLE_IR      0
+#define PINMUX_ENABLE_OLED    0
 #define PINMUX_ENABLE_I2C     1
 #define PINMUX_ENABLE_GPS     1
+#define PINMUX_ENABLE_LIGHT   0
 
 /*
  * Pin map used by the Backpack Anti-Theft Guardian firmware
@@ -33,14 +35,17 @@
  *   - PIN_58 : UART1 TX
  *   - PIN_59 : UART1 RX
  *
- * IR Receiver input
+ * IR receiver input (default)
  *   - PIN_03 : GPIO input (GPIOA1, 0x10)
+ *
+ * LDR input (dedicated, analog AO):
+ *   - PIN_60 : ADC_CH_3
  *
  * Reset/Disarm button
  *   - PIN_04 : GPIO input (GPIOA1, 0x20)
  *
  * Buzzer output
- *   - PIN_64 : GPIO output (GPIOA1, 0x02)
+ *   - PIN_15 : GPIO output (GPIOA2, 0x40)
  */
 
 //*****************************************************************************
@@ -56,6 +61,7 @@ void PinMuxConfig(void)
     //
     // Enable peripheral clocks used by this project
     //
+    PRCMPeripheralClkEnable(PRCM_GPIOA0, PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_GPIOA1, PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_GPIOA2, PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_GPIOA3, PRCM_RUN_MODE_CLK);
@@ -73,6 +79,13 @@ void PinMuxConfig(void)
     GPIODirModeSet(GPIOA1_BASE, 0x10, GPIO_DIR_MODE_IN);
 #endif
 
+#if PINMUX_ENABLE_LIGHT
+    //
+    // Dedicated LDR analog input: PIN_60 -> ADC_CH_3.
+    //
+    PinTypeADC(PIN_60, PIN_MODE_255);
+#endif
+
     //
     // Reset/Disarm button on PIN_04 -> GPIOA1, bit 0x20
     //
@@ -80,10 +93,10 @@ void PinMuxConfig(void)
     GPIODirModeSet(GPIOA1_BASE, 0x20, GPIO_DIR_MODE_IN);
 
     //
-    // Buzzer output on PIN_64 -> GPIOA1, bit 0x02
+    // Buzzer output on PIN_15 -> GPIOA2, bit 0x40
     //
-    PinTypeGPIO(PIN_64, PIN_MODE_0, false);
-    GPIODirModeSet(GPIOA1_BASE, 0x02, GPIO_DIR_MODE_OUT);
+    PinTypeGPIO(PIN_15, PIN_MODE_0, false);
+    GPIODirModeSet(GPIOA2_BASE, 0x40, GPIO_DIR_MODE_OUT);
 
 #if PINMUX_ENABLE_OLED
     //

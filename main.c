@@ -33,6 +33,8 @@
 #include "prcm.h"
 #include "rom_map.h"
 #include "gpio.h"
+#include "pin.h"
+#include "adc.h"
 #include "uart.h"
 #include "spi.h"
 #include "systick.h"
@@ -103,6 +105,7 @@ static void BoardInit(void)
 #define THING_NAME      "YOUR_THING_NAME"
 #define SERVER_NAME     "YOUR_AWS_ENDPOINT"  // e.g. a1b2c3d4e5-ats.iot.us-west-2.amazonaws.com
 #define TLS_DST_PORT    8443
+#define ALERT_EMAIL_RECIPIENT "teniandmahi@gmail.com"
 
 #define POSTHEADER      "POST /things/" THING_NAME "/shadow HTTP/1.1\r\n"
 #define HOSTHEADER      "Host: " SERVER_NAME "\r\n"
@@ -140,11 +143,17 @@ static void BoardInit(void)
 // Set to 1 only when OLED hardware is connected and verified.
 #define ENABLE_OLED              1
 // Set to 1 only when IR receiver hardware is connected and stable.
-#define ENABLE_IR                1
+#define ENABLE_IR                0
 // Set to 1 only when accelerometer/I2C hardware is connected and required.
 #define ENABLE_I2C               1
 // Set to 1 only after NWP/Wi-Fi bring-up is verified on your board.
 #define ENABLE_WIFI              1
+// Defer Wi-Fi so core anti-theft functions boot even if network is unstable.
+#define WIFI_DEFERRED_CONNECT    1
+#define WIFI_FIRST_ATTEMPT_MS    15000
+#define WIFI_RETRY_PERIOD_MS     30000
+// Light sensor (LDR module AO pin) on dedicated ADC input.
+#define ENABLE_LIGHT_SENSOR      0
 
 // IR command codes (update after observing printed received codes, if needed).
 #define IR_CMD_UNLOCK            0x8889
@@ -152,6 +161,14 @@ static void BoardInit(void)
 
 // Test fallback: long-press reset button to toggle arm/disarm without IR.
 #define BUTTON_TOGGLE_HOLD_MS    1500
+
+// CC3200 ADC mapping from TI SDK example:
+//   PIN_58 -> ADC_CH_1, PIN_59 -> ADC_CH_2, PIN_60 -> ADC_CH_3.
+// PIN_60 is kept free in this project, so use it for LDR AO.
+#define LIGHT_SENSOR_ADC_PIN         PIN_60
+#define LIGHT_SENSOR_ADC_CHANNEL     ADC_CH_3
+#define LIGHT_ADC_DELTA_THRESHOLD    180
+#define LIGHT_HITS_REQUIRED      3
 
 static volatile uint32_t g_tick40ms = 0;
 
@@ -191,6 +208,8 @@ static bool g_alert_sent = false;
 static bool g_wifi_connected = false;
 static bool g_oled_available = false;
 static bool g_i2c_available = false;
+static uint32_t g_wifi_next_attempt_tick = 0;
+static bool g_cloud_cfg_ok = false;
 
 static uint32_t g_arming_deadline = 0;
 static uint32_t g_ui_last_countdown = 0;
@@ -199,6 +218,10 @@ static uint32_t g_motion_next_sample = 0;
 static int g_prev_x = 0;
 static int g_prev_y = 0;
 static uint8_t g_motion_hits = 0;
+static uint16_t g_light_baseline_adc = 0;
+static uint8_t g_light_hits = 0;
+static bool g_last_trigger_light = false;
+static bool g_light_adc_ready = false;
 
 static const char *state_to_str(system_state_t st)
 {
@@ -218,8 +241,13 @@ static const char *state_to_str(system_state_t st)
 #define RESET_BTN_PIN           0x20          // PIN_04
 #define RESET_BTN_ACTIVE_LOW    1
 
-#define BUZZER_PORT             GPIOA1_BASE
-#define BUZZER_PIN              0x02          // PIN_64
+#define BUZZER_PORT             GPIOA2_BASE
+#define BUZZER_PIN              0x40          // PIN_15 (GPIOA2 bit 6)
+// 3.3V active buzzer module profile.
+// Set to 1 only if your module is LOW-trigger.
+#define BUZZER_TRIGGER_ACTIVE_LOW 1
+// Debug kill-switch: set to 1 to force buzzer silent regardless of state.
+#define BUZZER_FORCE_OFF          0
 
 //*****************************************************************************
 // IR decoder (48-bit frame, last 16-bit command)
@@ -389,6 +417,57 @@ static bool motion_detect_sample(void)
     return (g_motion_hits >= MOTION_HITS_REQUIRED);
 }
 
+static uint16_t light_sensor_read_raw_adc(void)
+{
+    unsigned long sample;
+    uint32_t guard;
+
+    if (!g_light_adc_ready) return 0;
+
+    MAP_ADCChannelEnable(ADC_BASE, LIGHT_SENSOR_ADC_CHANNEL);
+
+    guard = 5000;
+    while ((MAP_ADCFIFOLvlGet(ADC_BASE, LIGHT_SENSOR_ADC_CHANNEL) == 0) && (guard > 0)) {
+        guard--;
+    }
+
+    if (guard == 0) {
+        MAP_ADCChannelDisable(ADC_BASE, LIGHT_SENSOR_ADC_CHANNEL);
+        return 0;
+    }
+
+    sample = MAP_ADCFIFORead(ADC_BASE, LIGHT_SENSOR_ADC_CHANNEL);
+    MAP_ADCChannelDisable(ADC_BASE, LIGHT_SENSOR_ADC_CHANNEL);
+
+    return (uint16_t)((sample >> 2) & 0x0FFF);
+}
+
+static bool light_sensor_read_level(void)
+{
+    uint16_t raw = light_sensor_read_raw_adc();
+    return (raw >= 2048U);
+}
+
+static void light_sensor_arm_baseline(void)
+{
+    g_light_baseline_adc = light_sensor_read_raw_adc();
+    g_light_hits = 0;
+    Report("Light baseline ADC latched: %u\r\n", (unsigned int)g_light_baseline_adc);
+}
+
+static bool light_sensor_open_sample(void)
+{
+    uint16_t now = light_sensor_read_raw_adc();
+    uint16_t delta = (now > g_light_baseline_adc) ? (now - g_light_baseline_adc)
+                                                   : (g_light_baseline_adc - now);
+    if (delta >= LIGHT_ADC_DELTA_THRESHOLD) {
+        if (g_light_hits < 255) g_light_hits++;
+    } else {
+        if (g_light_hits > 0) g_light_hits--;
+    }
+    return (g_light_hits >= LIGHT_HITS_REQUIRED);
+}
+
 //*****************************************************************************
 // GPS (UART1) - parse RMC
 //*****************************************************************************
@@ -407,11 +486,59 @@ static uint32_t g_gps_diag_lines = 0;
 
 static void report_status_line(void)
 {
-    Report("Status: state=%s wifi=%s gps_uart=%s gps_fix=%s\r\n",
+    Report("Status: state=%s wifi=%s gps_uart=%s gps_fix=%s light=%s adc=%u\r\n",
            state_to_str(g_state),
            g_wifi_connected ? "UP" : "DOWN",
            g_gps_rx_seen ? "RX" : "NO-RX",
-           g_fix.valid ? "YES" : "NO");
+            g_fix.valid ? "YES" : "NO",
+           light_sensor_read_level() ? "HIGH" : "LOW",
+           (unsigned int)light_sensor_read_raw_adc());
+}
+
+static void ConfigureGpsPins(void)
+{
+    PinTypeUART(PIN_58, PIN_MODE_6); // UART1_TX
+    PinTypeUART(PIN_59, PIN_MODE_6); // UART1_RX
+}
+
+static void ConfigureI2CPins(void)
+{
+    PinTypeI2C(PIN_01, PIN_MODE_1); // I2C_SCL
+    PinTypeI2C(PIN_02, PIN_MODE_1); // I2C_SDA
+}
+
+static void ConfigureLightPin(void)
+{
+    MAP_PinTypeADC(LIGHT_SENSOR_ADC_PIN, PIN_MODE_255);
+    MAP_ADCEnable(ADC_BASE);
+    g_light_adc_ready = true;
+}
+
+static void ConfigureIrPin(void)
+{
+    PinTypeGPIO(PIN_03, PIN_MODE_0, false);
+    MAP_GPIODirModeSet(GPIOA1_BASE, 0x10, GPIO_DIR_MODE_IN);
+}
+
+static void ConfigureOledPins(void)
+{
+    PRCMPeripheralClkEnable(PRCM_GSPI, PRCM_RUN_MODE_CLK);
+
+    // OLED RESET on PIN_08 -> GPIOA2, bit 0x02
+    PinTypeGPIO(PIN_08, PIN_MODE_0, false);
+    MAP_GPIODirModeSet(GPIOA2_BASE, 0x02, GPIO_DIR_MODE_OUT);
+
+    // OLED CS on PIN_18 -> GPIOA3, bit 0x10
+    PinTypeGPIO(PIN_18, PIN_MODE_0, false);
+    MAP_GPIODirModeSet(GPIOA3_BASE, 0x10, GPIO_DIR_MODE_OUT);
+
+    // OLED DC on PIN_45 -> GPIOA3, bit 0x80
+    PinTypeGPIO(PIN_45, PIN_MODE_0, false);
+    MAP_GPIODirModeSet(GPIOA3_BASE, 0x80, GPIO_DIR_MODE_OUT);
+
+    // GSPI pins
+    PinTypeSPI(PIN_05, PIN_MODE_7); // GSPI_CLK
+    PinTypeSPI(PIN_07, PIN_MODE_7); // GSPI_MOSI
 }
 
 static void GPSUartInit(void)
@@ -567,8 +694,27 @@ static void GPSPoll(void)
 //*****************************************************************************
 // Buzzer
 //*****************************************************************************
-static void buzzer_on(void)  { MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, BUZZER_PIN); }
-static void buzzer_off(void) { MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0); }
+static void buzzer_on(void)
+{
+#if BUZZER_FORCE_OFF
+    buzzer_off();
+    return;
+#endif
+#if BUZZER_TRIGGER_ACTIVE_LOW
+    MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0);
+#else
+    MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, BUZZER_PIN);
+#endif
+}
+
+static void buzzer_off(void)
+{
+#if BUZZER_TRIGGER_ACTIVE_LOW
+    MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, BUZZER_PIN);
+#else
+    MAP_GPIOPinWrite(BUZZER_PORT, BUZZER_PIN, 0);
+#endif
+}
 
 static void buzzer_beep_pattern_step(void)
 {
@@ -830,6 +976,29 @@ static int wifi_connect_simple(void)
         return -1;
 }
 
+static void wifi_service_connect(void)
+{
+#if ENABLE_WIFI
+    int ret;
+
+    if (!g_cloud_cfg_ok) return;
+    if (g_wifi_connected) return;
+    if ((int32_t)(g_tick40ms - g_wifi_next_attempt_tick) < 0) return;
+
+    Report("WiFi: deferred connect attempt...\r\n");
+    ret = wifi_connect_simple();
+    if (ret < 0) {
+        g_wifi_connected = false;
+        g_wifi_next_attempt_tick = g_tick40ms + ms_to_ticks40(WIFI_RETRY_PERIOD_MS);
+        Report("WiFi deferred connect failed: %d (next retry in %lus)\r\n",
+               ret, (unsigned long)(WIFI_RETRY_PERIOD_MS / 1000));
+    } else {
+        g_wifi_connected = true;
+        Report("WiFi connected\r\n");
+    }
+#endif
+}
+
 //*****************************************************************************
 // Cloud notify
 //*****************************************************************************
@@ -925,9 +1094,9 @@ static int tls_connect(void)
     return sock;
 }
 
-static int cloud_post_event(const char *event_name)
+static int cloud_post_event(const char *trigger_name)
 {
-    char json[256];
+    char json[384];
     char hdr[256];
     char rsp[128];
     int sock;
@@ -941,17 +1110,20 @@ static int cloud_post_event(const char *event_name)
         return -3;
     }
 
-    if (!event_name) event_name = "ALERT";
+    if (!trigger_name) trigger_name = "MOTION";
     now_ms = g_tick40ms * 40U;
 
     if (g_fix.valid) {
         snprintf(json, sizeof(json),
-                 "{\"state\":{\"reported\":{\"event\":\"%s\",\"gps_fix\":true,\"lat\":%.6f,\"lon\":%.6f,\"uptime_ms\":%lu}}}",
-                 event_name, (double)g_fix.lat, (double)g_fix.lon, (unsigned long)now_ms);
+                 "{\"state\":{\"reported\":{\"event\":\"THEFT_ALERT\",\"trigger\":\"%s\",\"email_to\":\"%s\","
+                 "\"gps_fix\":true,\"lat\":%.6f,\"lon\":%.6f,\"uptime_ms\":%lu}}}",
+                 trigger_name, ALERT_EMAIL_RECIPIENT,
+                 (double)g_fix.lat, (double)g_fix.lon, (unsigned long)now_ms);
     } else {
         snprintf(json, sizeof(json),
-                 "{\"state\":{\"reported\":{\"event\":\"%s\",\"gps_fix\":false,\"uptime_ms\":%lu}}}",
-                 event_name, (unsigned long)now_ms);
+                 "{\"state\":{\"reported\":{\"event\":\"THEFT_ALERT\",\"trigger\":\"%s\",\"email_to\":\"%s\","
+                 "\"gps_fix\":false,\"lat\":null,\"lon\":null,\"uptime_ms\":%lu}}}",
+                 trigger_name, ALERT_EMAIL_RECIPIENT, (unsigned long)now_ms);
     }
 
     snprintf(hdr, sizeof(hdr), "%s%s%s%s%s%u%s",
@@ -1003,12 +1175,16 @@ static void enter_state(system_state_t st)
     if (st == ST_DISARMED) {
         buzzer_off();
         g_motion_hits = 0;
+        g_light_hits = 0;
+        g_last_trigger_light = false;
         g_alert_sent = false;
         ui_show_disarmed();
 
     } else if (st == ST_ARMING) {
         buzzer_off();
         g_motion_hits = 0;
+        g_light_hits = 0;
+        g_last_trigger_light = false;
         g_alert_sent = false;
 
         g_arming_deadline = g_tick40ms + ms_to_ticks40(ARM_GRACE_MS);
@@ -1019,10 +1195,13 @@ static void enter_state(system_state_t st)
     } else if (st == ST_ARMED) {
         buzzer_off();
         g_motion_hits = 0;
+        g_light_hits = 0;
+        g_last_trigger_light = false;
         g_alert_sent = false;
 
         accel_read_i8(ACCEL_REG_X, &g_prev_x);
         accel_read_i8(ACCEL_REG_Y, &g_prev_y);
+        light_sensor_arm_baseline();
 
         g_motion_next_sample = g_tick40ms + ms_to_ticks40(MOTION_SAMPLE_MS);
         ui_show_armed();
@@ -1108,9 +1287,24 @@ static void update_arming(void)
 static void update_armed(void)
 {
     if (g_tick40ms >= g_motion_next_sample) {
+        bool motion_alarm;
+        bool light_alarm;
         g_motion_next_sample = g_tick40ms + ms_to_ticks40(MOTION_SAMPLE_MS);
 
-        if (motion_detect_sample()) {
+        motion_alarm = motion_detect_sample();
+ #if ENABLE_LIGHT_SENSOR
+        light_alarm = light_sensor_open_sample();
+ #else
+        light_alarm = false;
+ #endif
+
+        if (motion_alarm || light_alarm) {
+            g_last_trigger_light = light_alarm;
+            if (light_alarm) {
+                Report("Alert trigger: bag-open (light change)\r\n");
+            } else {
+                Report("Alert trigger: motion/lift\r\n");
+            }
             enter_state(ST_ALERT);
         }
     }
@@ -1118,19 +1312,23 @@ static void update_armed(void)
 
 static void update_alert(void)
 {
-    buzzer_beep_pattern_step();
+    // Active buzzer: steady ON in ALERT until user disarms.
+    buzzer_on();
 
     if (!g_alert_sent) {
-        int ret = cloud_post_event("BACKPACK_ALERT");
-        g_alert_sent = true;
-        ui_show_cloud_sent(ret == 0);
+        int ret = cloud_post_event(g_last_trigger_light ? "BAG_OPEN" : "MOTION");
+        if (ret == 0) {
+            g_alert_sent = true;
+            ui_show_cloud_sent(true);
+        } else {
+            ui_show_cloud_sent(false);
+        }
     }
 
     ui_show_gps_line();
-
-    if (reset_pressed()) {
-        enter_state(ST_DISARMED);
-    }
+    // Do not disarm instantly on raw button level here.
+    // Disarm/arm is handled only by service_button_toggle()
+    // which requires SW3 long-press debounce timing.
 }
 
 //*****************************************************************************
@@ -1138,7 +1336,9 @@ static void update_alert(void)
 //*****************************************************************************
 int main(void)
 {
+#if ENABLE_WIFI && !WIFI_DEFERRED_CONNECT
     int ret;
+#endif
     uint16_t cmd;
     uint32_t next_status_tick;
 
@@ -1149,24 +1349,79 @@ int main(void)
     // Keep boot logs visible in terminals that don't parse ANSI clear codes.
     Report("\r\n=== Anti-Theft Backpack Guardian Boot ===\r\n");
     Report("UART0: 115200 8N1 | UART1(GPS): 9600 8N1\r\n");
- #if ENABLE_GPS
-    GPSUartInit();
-    Report("UART1 GPS init: 9600 8N1\r\n");
- #else
-    Report("UART1 GPS disabled by config\r\n");
- #endif
 
     SysTickInitApp();
+
+    MAP_GPIODirModeSet(RESET_BTN_PORT, RESET_BTN_PIN, GPIO_DIR_MODE_IN);
+    MAP_GPIODirModeSet(BUZZER_PORT, BUZZER_PIN, GPIO_DIR_MODE_OUT);
+    buzzer_off();
+
+    Report("Init: WiFi connect start\r\n");
+#if ENABLE_WIFI
+ #if WIFI_DEFERRED_CONNECT
+    g_wifi_connected = false;
+    g_wifi_next_attempt_tick = g_tick40ms + ms_to_ticks40(WIFI_FIRST_ATTEMPT_MS);
+    Report("WiFi: deferred start, first attempt in %lus\r\n",
+           (unsigned long)(WIFI_FIRST_ATTEMPT_MS / 1000));
+ #else
+    ret = wifi_connect_simple();
+    if (ret < 0) {
+        g_wifi_connected = false;
+        Report("WiFi connect failed: %d\r\n", ret);
+    } else {
+        g_wifi_connected = true;
+        Report("WiFi connected\r\n");
+    }
+ #endif
+    g_cloud_cfg_ok = cloud_config_valid();
+    if (!g_cloud_cfg_ok) {
+        Report("WiFi: cloud config invalid, auto-connect paused\r\n");
+    }
+#else
+    g_wifi_connected = false;
+    Report("Init: WiFi disabled by config, continuing\r\n");
+#endif
+
+#if ENABLE_LIGHT_SENSOR
+    ConfigureLightPin();
+    Report("Init: Light sensor pin done\r\n");
+#endif
+
+    Report("Init: I2C start\r\n");
+#if ENABLE_I2C
+    ConfigureI2CPins();
+    I2C_IF_Open(I2C_MASTER_MODE_FST);
+    g_i2c_available = true;
+    Report("Init: I2C done\r\n");
+#else
+    g_i2c_available = false;
+    Report("Init: I2C disabled by config, continuing\r\n");
+#endif
+
+    Report("Init: IR start\r\n");
+#if ENABLE_IR
+    ConfigureIrPin();
+    IRInit();
+    Report("Init: IR done\r\n");
+#else
+    Report("Init: IR disabled by config, continuing\r\n");
+#endif
+
  #if ENABLE_GPS
+    ConfigureGpsPins();
+    GPSUartInit();
     g_gps_connect_deadline = g_tick40ms + ms_to_ticks40(GPS_CONNECT_TIMEOUT_MS);
+    Report("UART1 GPS init: 9600 8N1\r\n");
     Report("GPS: waiting for fix (%lus timeout)\r\n",
            (unsigned long)(GPS_CONNECT_TIMEOUT_MS / 1000));
  #else
     g_gps_connect_deadline = 0;
+    Report("UART1 GPS disabled by config\r\n");
  #endif
 
     Report("Init: OLED start\r\n");
 #if ENABLE_OLED
+    ConfigureOledPins();
     if (Adafruit_Init()) {
         g_oled_available = true;
         ui_oled_self_test();
@@ -1181,48 +1436,14 @@ int main(void)
     Report("Init: OLED disabled by config, continuing without display\r\n");
 #endif
 
-    Report("Init: I2C start\r\n");
-#if ENABLE_I2C
-    I2C_IF_Open(I2C_MASTER_MODE_FST);
-    g_i2c_available = true;
-    Report("Init: I2C done\r\n");
-#else
-    g_i2c_available = false;
-    Report("Init: I2C disabled by config, continuing\r\n");
-#endif
-
-    Report("Init: IR start\r\n");
-#if ENABLE_IR
-    IRInit();
-    Report("Init: IR done\r\n");
-#else
-    Report("Init: IR disabled by config, continuing\r\n");
-#endif
-
-    MAP_GPIODirModeSet(RESET_BTN_PORT, RESET_BTN_PIN, GPIO_DIR_MODE_IN);
-    MAP_GPIODirModeSet(BUZZER_PORT, BUZZER_PIN, GPIO_DIR_MODE_OUT);
-    buzzer_off();
-
-    Report("Init: WiFi connect start\r\n");
-#if ENABLE_WIFI
-    ret = wifi_connect_simple();
-    if (ret < 0) {
-        g_wifi_connected = false;
-        Report("WiFi connect failed: %d\r\n", ret);
-    } else {
-        g_wifi_connected = true;
-        Report("WiFi connected\r\n");
-    }
-    cloud_config_valid();
-#else
-    g_wifi_connected = false;
-    Report("Init: WiFi disabled by config, continuing\r\n");
-#endif
-
     next_status_tick = g_tick40ms + ms_to_ticks40(STATUS_PERIOD_MS);
     report_status_line();
 
     while (1) {
+ #if ENABLE_WIFI
+        wifi_service_connect();
+ #endif
+
  #if ENABLE_GPS
         GPSPoll();
  #endif
@@ -1248,6 +1469,11 @@ int main(void)
             update_armed();
         } else if (g_state == ST_ALERT) {
             update_alert();
+        }
+
+        // Keep buzzer line deterministic for active-low modules on PIN_15.
+        if (g_state != ST_ALERT) {
+            buzzer_off();
         }
 
         MAP_UtilsDelay(40000);

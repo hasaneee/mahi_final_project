@@ -18,6 +18,7 @@ This project provides:
 - Arm/Disarm using IR remote
 - Arming grace period before monitoring starts
 - Motion/lift detection using onboard accelerometer (I2C)
+- Bag-open detection using LDR module digital output (GPIO)
 - Alert state with buzzer pattern
 - OLED feedback for all states (DISARMED, ARMING, ARMED, ALERT)
 - GPS parsing from NMEA RMC over UART1
