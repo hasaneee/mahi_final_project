@@ -136,6 +136,7 @@ static void BoardInit(void)
 #define TICKS_TO_US(ticks)      ((ticks) / (SYSCLK_HZ / 1000000ULL))
 #define GPS_UART_BAUD            9600
 #define STATUS_PERIOD_MS         1000
+#define GPS_COORD_PERIOD_MS      5000
 #define GPS_CONNECT_TIMEOUT_MS   180000
 #define GPS_DIAG_ECHO_LINES      8
 // Set to 1 only when GPS wiring is connected and does not interfere with NWP boot pins.
@@ -493,6 +494,15 @@ static void report_status_line(void)
             g_fix.valid ? "YES" : "NO",
            light_sensor_read_level() ? "HIGH" : "LOW",
            (unsigned int)light_sensor_read_raw_adc());
+}
+
+static void report_gps_coord_line(void)
+{
+    if (g_fix.valid) {
+        Report("GPS 5s: lat=%.6f lon=%.6f\r\n", (double)g_fix.lat, (double)g_fix.lon);
+    } else {
+        Report("GPS 5s: no-fix\r\n");
+    }
 }
 
 static void ConfigureGpsPins(void)
@@ -1341,6 +1351,7 @@ int main(void)
 #endif
     uint16_t cmd;
     uint32_t next_status_tick;
+    uint32_t next_gps_coord_tick;
 
     BoardInit();
     PinMuxConfig();
@@ -1437,6 +1448,7 @@ int main(void)
 #endif
 
     next_status_tick = g_tick40ms + ms_to_ticks40(STATUS_PERIOD_MS);
+    next_gps_coord_tick = g_tick40ms + ms_to_ticks40(GPS_COORD_PERIOD_MS);
     report_status_line();
 
     while (1) {
@@ -1452,6 +1464,13 @@ int main(void)
             report_status_line();
             next_status_tick += ms_to_ticks40(STATUS_PERIOD_MS);
         }
+
+#if ENABLE_GPS
+        if ((int32_t)(g_tick40ms - next_gps_coord_tick) >= 0) {
+            report_gps_coord_line();
+            next_gps_coord_tick += ms_to_ticks40(GPS_COORD_PERIOD_MS);
+        }
+#endif
 
         service_button_toggle();
 
