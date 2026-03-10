@@ -12,11 +12,14 @@
 // Driverlib includes
 #include "hw_types.h"
 #include "hw_ints.h"
+#include "hw_memmap.h"
 #include "rom.h"
 #include "rom_map.h"
 #include "interrupt.h"
 #include "prcm.h"
 #include "uart.h"
+#include "pin.h"
+#include "gpio.h"
 
 //Common interface includes
 #include "gpio_if.h"
@@ -36,6 +39,116 @@ int g_port;
 
 SlDateTime g_time;
 SlAppConfig_t g_app_config;
+
+_SlEventPropogationStatus_e sl_Provisioning_HttpServerEventHdl(
+                            SlHttpServerEvent_t *apSlHttpServerEvent,
+                            SlHttpServerResponse_t *apSlHttpServerResponse)
+{
+    (void)apSlHttpServerEvent;
+    (void)apSlHttpServerResponse;
+    return EVENT_PROPAGATION_CONTINUE;
+}
+
+_SlEventPropogationStatus_e sl_Provisioning_NetAppEventHdl(
+                            SlNetAppEvent_t *apNetAppEvent)
+{
+    (void)apNetAppEvent;
+    return EVENT_PROPAGATION_CONTINUE;
+}
+
+_SlEventPropogationStatus_e sl_Provisioning_WlanEventHdl(
+                            SlWlanEvent_t *apEventInfo)
+{
+    (void)apEventInfo;
+    return EVENT_PROPAGATION_CONTINUE;
+}
+
+/*
+ * Local fallback implementations for GPIO_IF LED APIs.
+ * This project currently links without gpio_if.c, so provide the LED
+ * primitives used by main.c and network_utils.c.
+ */
+#define BOARD_LED_RED_PORT      GPIOA1_BASE
+#define BOARD_LED_RED_PIN       0x2
+#define BOARD_LED_GREEN_PORT    GPIOA1_BASE
+#define BOARD_LED_GREEN_PIN     0x8
+
+static unsigned char g_ucLedConfiguredMask = 0;
+
+static void EnsureLedConfigured(unsigned char ucLedMask)
+{
+    if((ucLedMask & LED1) && !(g_ucLedConfiguredMask & LED1)) {
+        MAP_PinTypeGPIO(PIN_64, PIN_MODE_0, false);
+        MAP_GPIODirModeSet(BOARD_LED_RED_PORT, BOARD_LED_RED_PIN,
+                           GPIO_DIR_MODE_OUT);
+        g_ucLedConfiguredMask |= LED1;
+    }
+
+    if((ucLedMask & LED3) && !(g_ucLedConfiguredMask & LED3)) {
+        MAP_PinTypeGPIO(PIN_02, PIN_MODE_0, false);
+        MAP_GPIODirModeSet(BOARD_LED_GREEN_PORT, BOARD_LED_GREEN_PIN,
+                           GPIO_DIR_MODE_OUT);
+        g_ucLedConfiguredMask |= LED3;
+    }
+}
+
+static unsigned char LedNameToMask(char ledNum)
+{
+    switch(ledNum) {
+        case MCU_SENDING_DATA_IND:
+        case MCU_EXECUTE_FAIL_IND:
+        case MCU_ASSOCIATED_IND:
+        case MCU_IP_ALLOC_IND:
+        case MCU_SERVER_INIT_IND:
+        case MCU_CLIENT_CONNECTED_IND:
+        case MCU_RED_LED_GPIO:
+            return LED1;
+
+        case MCU_ON_IND:
+        case MCU_EXECUTE_SUCCESS_IND:
+        case MCU_GREEN_LED_GPIO:
+            return LED3;
+
+        case MCU_ALL_LED_IND:
+            return (LED1 | LED3);
+
+        default:
+            return NO_LED;
+    }
+}
+
+void GPIO_IF_LedConfigure(unsigned char ucPins)
+{
+    EnsureLedConfigured(ucPins);
+}
+
+void GPIO_IF_LedOn(char ledNum)
+{
+    unsigned char ucLedMask = LedNameToMask(ledNum);
+    EnsureLedConfigured(ucLedMask);
+
+    if(ucLedMask & LED1) {
+        MAP_GPIOPinWrite(BOARD_LED_RED_PORT, BOARD_LED_RED_PIN,
+                         BOARD_LED_RED_PIN);
+    }
+    if(ucLedMask & LED3) {
+        MAP_GPIOPinWrite(BOARD_LED_GREEN_PORT, BOARD_LED_GREEN_PIN,
+                         BOARD_LED_GREEN_PIN);
+    }
+}
+
+void GPIO_IF_LedOff(char ledNum)
+{
+    unsigned char ucLedMask = LedNameToMask(ledNum);
+    EnsureLedConfigured(ucLedMask);
+
+    if(ucLedMask & LED1) {
+        MAP_GPIOPinWrite(BOARD_LED_RED_PORT, BOARD_LED_RED_PIN, 0);
+    }
+    if(ucLedMask & LED3) {
+        MAP_GPIOPinWrite(BOARD_LED_GREEN_PORT, BOARD_LED_GREEN_PIN, 0);
+    }
+}
 
 //*****************************************************************************
 // SimpleLink Asynchronous Event Handlers -- Start
@@ -454,6 +567,8 @@ static long WlanConnect() {
 
 
     // Wait for WLAN Event
+    //ADDITION : Count ticks and return error if taking too long
+    int ticks = 0;
     while((!IS_CONNECTED(g_ulStatus)) || (!IS_IP_ACQUIRED(g_ulStatus))) {
         // Toggle LEDs to Indicate Connection Progress
         _SlNonOsMainLoopTask();
@@ -462,8 +577,14 @@ static long WlanConnect() {
         _SlNonOsMainLoopTask();
         GPIO_IF_LedOn(MCU_IP_ALLOC_IND);
         MAP_UtilsDelay(800000);
+        //UART_PRINT("Connection attempt %d\n\r", IS_CONNECTED(g_ulStatus));
+        //UART_PRINT("Connection attempt %d\n\r", IS_IP_ACQUIRED(g_ulStatus));
+        ticks++;
+        if(ticks > 60){
+            return FAILURE;
+        }
     }
-
+    //UART_PRINT("Check if successful");
     return SUCCESS;
 
 }

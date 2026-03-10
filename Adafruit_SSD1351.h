@@ -92,7 +92,7 @@ class Adafruit_SSD1351  : public virtual Adafruit_GFX {
   unsigned int Color565(unsigned char r, unsigned char g, unsigned char b);
 */
 
-  int Adafruit_Init(void);
+  void Adafruit_Init(void);
 	void Outstr (char * str);
 	
   // drawing primitives!

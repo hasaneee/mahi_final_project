@@ -12,12 +12,8 @@ GEN_CMDS__FLAG :=
 ORDERED_OBJS += \
 "./Adafruit_GFX.obj" \
 "./Adafruit_OLED.obj" \
-"./gpio_if.obj" \
-"./i2c_if.obj" \
 "./main.obj" \
-"./oled_test.obj" \
 "./pinmux.obj" \
-"./provisioning_stub.obj" \
 "./uart_if.obj" \
 "./utils/network_utils.obj" \
 "../cc3200v1p32.cmd" \
@@ -154,8 +150,8 @@ Final_project_anti_theft.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 # Other Targets
 clean:
 	-$(RM) $(EXE_OUTPUTS__QUOTED)
-	-$(RM) "Adafruit_GFX.obj" "Adafruit_OLED.obj" "gpio_if.obj" "i2c_if.obj" "main.obj" "oled_test.obj" "pinmux.obj" "provisioning_stub.obj" "uart_if.obj" "utils\network_utils.obj" 
-	-$(RM) "Adafruit_GFX.d" "Adafruit_OLED.d" "gpio_if.d" "i2c_if.d" "main.d" "oled_test.d" "pinmux.d" "provisioning_stub.d" "uart_if.d" "utils\network_utils.d" 
+	-$(RM) "Adafruit_GFX.obj" "Adafruit_OLED.obj" "main.obj" "pinmux.obj" "uart_if.obj" "utils\network_utils.obj" 
+	-$(RM) "Adafruit_GFX.d" "Adafruit_OLED.d" "main.d" "pinmux.d" "uart_if.d" "utils\network_utils.d" 
 	-@echo 'Finished clean'
 	-@echo ' '
 

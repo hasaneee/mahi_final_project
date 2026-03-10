@@ -294,17 +294,16 @@ int Report(const char *pcFormat, ...)
 {
  int iRet = 0;
 #ifndef NOTERM
-  char pcBuff[256];
+  char cBuff[256];
   va_list list;
+
   va_start(list,pcFormat);
-  iRet = vsnprintf(pcBuff, sizeof(pcBuff), pcFormat, list);
+  iRet = vsnprintf(cBuff, sizeof(cBuff), pcFormat, list);
   va_end(list);
-  if (iRet < 0)
-  {
-      return iRet;
-  }
-  Message(pcBuff);
-  
+
+  cBuff[sizeof(cBuff) - 1] = '\0';
+  Message(cBuff);
+
 #endif
   return iRet;
 }

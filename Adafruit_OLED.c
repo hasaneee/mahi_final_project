@@ -1,309 +1,345 @@
-#include <stdint.h>
 
+// Standard includes
+#include <string.h>
+
+// Driverlib includes
 #include "hw_types.h"
 #include "hw_memmap.h"
+#include "hw_common_reg.h"
+#include "hw_ints.h"
 #include "gpio.h"
 #include "spi.h"
-#include "prcm.h"
+#include "rom.h"
 #include "rom_map.h"
 #include "utils.h"
+#include "prcm.h"
+#include "uart.h"
+#include "interrupt.h"
+
+// Common interface includes
+#include "uart_if.h"
+#include "pinmux.h"
 
 #include "Adafruit_SSD1351.h"
 
-// GPIO pins (match your pinmux.c wiring)
-static inline void OLED_CS_Low(void)   { MAP_GPIOPinWrite(GPIOA3_BASE, 0x10, 0x00); }
-static inline void OLED_CS_High(void)  { MAP_GPIOPinWrite(GPIOA3_BASE, 0x10, 0x10); }
-static inline void OLED_DC_Cmd(void)   { MAP_GPIOPinWrite(GPIOA3_BASE, 0x80, 0x00); }
-static inline void OLED_DC_Data(void)  { MAP_GPIOPinWrite(GPIOA3_BASE, 0x80, 0x80); }
-static int g_oled_ready = 0;
+//*****************************************************************************
 
-static inline void OLED_ResetPulse(void)
+static int SPITransferByte(unsigned char c)
 {
-    MAP_GPIOPinWrite(GPIOA2_BASE, 0x02, 0x00);
-    MAP_UtilsDelay(800000);
-    MAP_GPIOPinWrite(GPIOA2_BASE, 0x02, 0x02);
-    MAP_UtilsDelay(800000);
-}
+    unsigned long dummy = 0;
+    volatile unsigned long timeout = 200000UL;
 
-static int OLED_SPI_Write8(unsigned char b)
-{
-    long wrote;
-    long got;
-    unsigned long dummy;
-    int guard;
-
-    if (!g_oled_ready) return 0;
-
-    wrote = 0;
-    for (guard = 0; guard < 20000; guard++) {
-        wrote = MAP_SPIDataPutNonBlocking(GSPI_BASE, (unsigned long)b);
-        if (wrote) break;
+    while (!MAP_SPIDataPutNonBlocking(GSPI_BASE, c) && timeout) {
+        timeout--;
     }
-    if (!wrote) return 0;
-
-    got = 0;
-    for (guard = 0; guard < 20000; guard++) {
-        got = MAP_SPIDataGetNonBlocking(GSPI_BASE, &dummy);
-        if (got) break;
+    if (timeout == 0) {
+        return -1;
     }
-    if (!got) return 0;
 
-    return 1;
-}
-
-static void OLED_SPI_Init(void)
-{
-    MAP_SPIReset(GSPI_BASE);
-    MAP_SPIConfigSetExpClk(GSPI_BASE,
-                           MAP_PRCMPeripheralClockGet(PRCM_GSPI),
-                           1000000,
-                           SPI_MODE_MASTER,
-                           SPI_SUB_MODE_0,
-                           (SPI_SW_CTRL_CS |
-                            SPI_4PIN_MODE |
-                            SPI_TURBO_OFF |
-                            SPI_CS_ACTIVELOW |
-                            SPI_WL_8));
-    MAP_SPIEnable(GSPI_BASE);
-    MAP_SPICSDisable(GSPI_BASE);
-}
-
-void writeCommand(unsigned char c)
-{
-    if (!g_oled_ready) return;
-    OLED_DC_Cmd();
-    OLED_CS_Low();
-    if (!OLED_SPI_Write8(c)) {
-        g_oled_ready = 0;
+    timeout = 200000UL;
+    while (!MAP_SPIDataGetNonBlocking(GSPI_BASE, &dummy) && timeout) {
+        timeout--;
     }
-    OLED_CS_High();
-}
-
-void writeData(unsigned char d)
-{
-    if (!g_oled_ready) return;
-    OLED_DC_Data();
-    OLED_CS_Low();
-    if (!OLED_SPI_Write8(d)) {
-        g_oled_ready = 0;
+    if (timeout == 0) {
+        return -1;
     }
-    OLED_CS_High();
+
+    return 0;
 }
 
-unsigned int Color565(unsigned char r, unsigned char g, unsigned char b)
+void writeCommand(unsigned char c) {
+
+//TODO 1
+/* Write a function to send a command byte c to the OLED via
+*  SPI.
+*/
+    //Set command line (set DC pin to low)
+    GPIOPinWrite(GPIOA3_BASE, 0x80, 0x00);
+
+    //Enable chip select by pulling the OLEDCS pin low
+    GPIOPinWrite(GPIOA0_BASE,0x80, 0x00);
+
+    //Enable SPI chip select
+    MAP_SPICSEnable(GSPI_BASE);
+
+    // Push command byte, but avoid hanging forever if SPI is misconfigured.
+    (void)SPITransferByte(c);
+
+    //Disable chip select when done by pulling OLEDCS high
+    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x80);
+}
+//*****************************************************************************
+
+void writeData(unsigned char c) {
+
+//TODO 2
+/* Write a function to send a data byte c to the OLED via
+*  SPI.
+*/
+    //Set data line (set DC pin to high)
+    GPIOPinWrite(GPIOA3_BASE, 0x80, 0x80); // DC high for data
+
+    //Enable chip select by pulling the OLEDCS pin low
+    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x00);
+
+    //Enable SPI chip select
+    MAP_SPICSEnable(GSPI_BASE);
+
+    // Push data byte, but avoid hanging forever if SPI is misconfigured.
+    (void)SPITransferByte(c);
+
+    //Disable chip select when done by pulling OLEDCS high
+    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x80);
+}
+
+//*****************************************************************************
+void Adafruit_Init(void){
+
+//TODO 3
+/* NOTE: This function assumes that the RESET pin of the 
+*  OLED has been wired to GPIO28, pin 18 (P2.2). If you 
+*  use a different pin for the OLED reset, then you should
+*  update the GPIOPinWrite commands below that set RESET 
+*  high or low.
+*/
+
+  volatile unsigned long delay;
+
+  GPIOPinWrite(GPIOA1_BASE, 0x1, 0x00); // RESET = RESET_LOW
+
+  for(delay=0; delay<100; delay=delay+1);// delay minimum 100 ns
+
+  GPIOPinWrite(GPIOA1_BASE, 0x1, 0x1);  // RESET = RESET_HIGH
+
+    // Initialization Sequence
+  writeCommand(SSD1351_CMD_COMMANDLOCK);  // set command lock
+  writeData(0x12);
+  writeCommand(SSD1351_CMD_COMMANDLOCK);  // set command lock
+  writeData(0xB1);
+
+  writeCommand(SSD1351_CMD_DISPLAYOFF);         // 0xAE
+
+  writeCommand(SSD1351_CMD_CLOCKDIV);       // 0xB3
+  writeCommand(0xF1);                       // 7:4 = Oscillator Frequency, 3:0 = CLK Div Ratio (A[3:0]+1 = 1..16)
+
+  writeCommand(SSD1351_CMD_MUXRATIO);
+  writeData(127);
+
+  writeCommand(SSD1351_CMD_SETREMAP);
+  writeData(0x74);
+
+  writeCommand(SSD1351_CMD_SETCOLUMN);
+  writeData(0x00);
+  writeData(0x7F);
+  writeCommand(SSD1351_CMD_SETROW);
+  writeData(0x00);
+  writeData(0x7F);
+
+  writeCommand(SSD1351_CMD_STARTLINE);      // 0xA1
+  if (SSD1351HEIGHT == 96) {
+    writeData(96);
+  } else {
+    writeData(0);
+  }
+
+
+  writeCommand(SSD1351_CMD_DISPLAYOFFSET);  // 0xA2
+  writeData(0x0);
+
+  writeCommand(SSD1351_CMD_SETGPIO);
+  writeData(0x00);
+
+  writeCommand(SSD1351_CMD_FUNCTIONSELECT);
+  writeData(0x01); // internal (diode drop)
+  //writeData(0x01); // external bias
+
+//    writeCommand(SSSD1351_CMD_SETPHASELENGTH);
+//    writeData(0x32);
+
+  writeCommand(SSD1351_CMD_PRECHARGE);          // 0xB1
+  writeCommand(0x32);
+
+  writeCommand(SSD1351_CMD_VCOMH);              // 0xBE
+  writeCommand(0x05);
+
+  writeCommand(SSD1351_CMD_NORMALDISPLAY);      // 0xA6
+
+  writeCommand(SSD1351_CMD_CONTRASTABC);
+  writeData(0xC8);
+  writeData(0x80);
+  writeData(0xC8);
+
+  writeCommand(SSD1351_CMD_CONTRASTMASTER);
+  writeData(0x0F);
+
+  writeCommand(SSD1351_CMD_SETVSL );
+  writeData(0xA0);
+  writeData(0xB5);
+  writeData(0x55);
+
+  writeCommand(SSD1351_CMD_PRECHARGE2);
+  writeData(0x01);
+
+  writeCommand(SSD1351_CMD_DISPLAYON);      //--turn on oled panel
+}
+
+/***********************************/
+
+void goTo(int x, int y) {
+  if ((x >= SSD1351WIDTH) || (y >= SSD1351HEIGHT)) return;
+
+  // set x and y coordinate
+  writeCommand(SSD1351_CMD_SETCOLUMN);
+  writeData(x);
+  writeData(SSD1351WIDTH-1);
+
+  writeCommand(SSD1351_CMD_SETROW);
+  writeData(y);
+  writeData(SSD1351HEIGHT-1);
+
+  writeCommand(SSD1351_CMD_WRITERAM);
+}
+
+unsigned int Color565(unsigned char r, unsigned char g, unsigned char b) {
+  unsigned int c;
+  c = r >> 3;
+  c <<= 6;
+  c |= g >> 2;
+  c <<= 5;
+  c |= b >> 3;
+
+  return c;
+}
+
+void fillScreen(unsigned int fillcolor) {
+  fillRect(0, 0, SSD1351WIDTH, SSD1351HEIGHT, fillcolor);
+}
+
+/**************************************************************************/
+/*!
+    @brief  Draws a filled rectangle using HW acceleration
+*/
+/**************************************************************************/
+void fillRect(unsigned int x, unsigned int y, unsigned int w, unsigned int h, unsigned int fillcolor)
 {
-    return (unsigned int)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+  unsigned int i;
+
+  // Bounds check
+  if ((x >= SSD1351WIDTH) || (y >= SSD1351HEIGHT))
+    return;
+
+  // Y bounds check
+  if (y+h > SSD1351HEIGHT)
+  {
+    h = SSD1351HEIGHT - y - 1;
+  }
+
+  // X bounds check
+  if (x+w > SSD1351WIDTH)
+  {
+    w = SSD1351WIDTH - x - 1;
+  }
+
+  // set location
+  writeCommand(SSD1351_CMD_SETCOLUMN);
+  writeData(x);
+  writeData(x+w-1);
+  writeCommand(SSD1351_CMD_SETROW);
+  writeData(y);
+  writeData(y+h-1);
+  // fill!
+  writeCommand(SSD1351_CMD_WRITERAM);
+
+  for (i=0; i < w*h; i++) {
+    writeData(fillcolor >> 8);
+    writeData(fillcolor);
+  }
 }
 
-int Adafruit_Init(void)
-{
-    g_oled_ready = 1;
-    OLED_SPI_Init();
+void drawFastVLine(int x, int y, int h, unsigned int color) {
 
-    OLED_CS_High();
-    OLED_DC_Data();
+  unsigned int i;
+  // Bounds check
+  if ((x >= SSD1351WIDTH) || (y >= SSD1351HEIGHT))
+    return;
 
-    OLED_ResetPulse();
+  // X bounds check
+  if (y+h > SSD1351HEIGHT)
+  {
+    h = SSD1351HEIGHT - y - 1;
+  }
 
-    writeCommand(SSD1351_CMD_COMMANDLOCK);
-    writeData(0x12);
-    writeCommand(SSD1351_CMD_COMMANDLOCK);
-    writeData(0xB1);
+  if (h < 0) return;
 
-    writeCommand(SSD1351_CMD_DISPLAYOFF);
+  // set location
+  writeCommand(SSD1351_CMD_SETCOLUMN);
+  writeData(x);
+  writeData(x);
+  writeCommand(SSD1351_CMD_SETROW);
+  writeData(y);
+  writeData(y+h-1);
+  // fill!
+  writeCommand(SSD1351_CMD_WRITERAM);
 
-    writeCommand(SSD1351_CMD_CLOCKDIV);
-    writeData(0xF1);
-
-    writeCommand(SSD1351_CMD_MUXRATIO);
-    writeData(127);
-
-    writeCommand(SSD1351_CMD_SETREMAP);
-    writeData(0x74);
-
-    writeCommand(SSD1351_CMD_STARTLINE);
-    writeData(0x00);
-
-    writeCommand(SSD1351_CMD_DISPLAYOFFSET);
-    writeData(0x00);
-
-    writeCommand(SSD1351_CMD_SETGPIO);
-    writeData(0x00);
-
-    writeCommand(SSD1351_CMD_FUNCTIONSELECT);
-    writeData(0x01);
-
-    writeCommand(SSD1351_CMD_PRECHARGE);
-    writeData(0x32);
-
-    writeCommand(SSD1351_CMD_VCOMH);
-    writeData(0x05);
-
-    writeCommand(SSD1351_CMD_NORMALDISPLAY);
-
-    writeCommand(SSD1351_CMD_CONTRASTABC);
-    writeData(0xC8);
-    writeData(0x80);
-    writeData(0xC8);
-
-    writeCommand(SSD1351_CMD_CONTRASTMASTER);
-    writeData(0x0F);
-
-    writeCommand(SSD1351_CMD_SETVSL);
-    writeData(0xA0);
-    writeData(0xB5);
-    writeData(0x55);
-
-    writeCommand(SSD1351_CMD_PRECHARGE2);
-    writeData(0x01);
-
-    writeCommand(SSD1351_CMD_DISPLAYON);
-
-    MAP_UtilsDelay(800000);
-    return g_oled_ready;
+  for (i=0; i < h; i++) {
+    writeData(color >> 8);
+    writeData(color);
+  }
 }
 
-void goTo(int x, int y)
-{
-    writeCommand(SSD1351_CMD_SETCOLUMN);
-    writeData((unsigned char)x);
-    writeData(127);
 
-    writeCommand(SSD1351_CMD_SETROW);
-    writeData((unsigned char)y);
-    writeData(127);
+
+void drawFastHLine(int x, int y, int w, unsigned int color) {
+
+  unsigned int i;
+  // Bounds check
+  if ((x >= SSD1351WIDTH) || (y >= SSD1351HEIGHT))
+    return;
+
+  // X bounds check
+  if (x+w > SSD1351WIDTH)
+  {
+    w = SSD1351WIDTH - x - 1;
+  }
+
+  if (w < 0) return;
+
+  // set location
+  writeCommand(SSD1351_CMD_SETCOLUMN);
+  writeData(x);
+  writeData(x+w-1);
+  writeCommand(SSD1351_CMD_SETROW);
+  writeData(y);
+  writeData(y);
+  // fill!
+  writeCommand(SSD1351_CMD_WRITERAM);
+
+  for (i=0; i < w; i++) {
+    writeData(color >> 8);
+    writeData(color);
+  }
 }
 
-static void setWindow(int x0, int y0, int x1, int y1)
-{
-    writeCommand(SSD1351_CMD_SETCOLUMN);
-    writeData((unsigned char)x0);
-    writeData((unsigned char)x1);
 
-    writeCommand(SSD1351_CMD_SETROW);
-    writeData((unsigned char)y0);
-    writeData((unsigned char)y1);
 
-    writeCommand(SSD1351_CMD_WRITERAM);
-}
 
 void drawPixel(int x, int y, unsigned int color)
 {
-    if (!g_oled_ready) return;
-    if (x < 0 || x >= 128 || y < 0 || y >= 128) return;
+  if ((x >= SSD1351WIDTH) || (y >= SSD1351HEIGHT)) return;
+  if ((x < 0) || (y < 0)) return;
 
-    setWindow(x, y, x, y);
+  goTo(x, y);
 
-    OLED_DC_Data();
-    OLED_CS_Low();
-    if (!OLED_SPI_Write8((unsigned char)(color >> 8)) ||
-        !OLED_SPI_Write8((unsigned char)(color & 0xFF))) {
-        g_oled_ready = 0;
-    }
-    OLED_CS_High();
+  writeData(color >> 8);
+  writeData(color);
 }
 
-void fillScreen(unsigned int fillcolor)
-{
-    int x;
-    int y;
-    if (!g_oled_ready) return;
 
-    setWindow(0, 0, 127, 127);
+void  invert(char v) {
+   if (v) {
+     writeCommand(SSD1351_CMD_INVERTDISPLAY);
+   } else {
+        writeCommand(SSD1351_CMD_NORMALDISPLAY);
+   }
+ }
 
-    OLED_DC_Data();
-    OLED_CS_Low();
-
-    for (y = 0; y < 128; y++) {
-        for (x = 0; x < 128; x++) {
-            if (!OLED_SPI_Write8((unsigned char)(fillcolor >> 8)) ||
-                !OLED_SPI_Write8((unsigned char)(fillcolor & 0xFF))) {
-                g_oled_ready = 0;
-                OLED_CS_High();
-                return;
-            }
-        }
-    }
-
-    OLED_CS_High();
-}
-
-void drawFastHLine(int x, int y, int w, unsigned int color)
-{
-    int i;
-    if (!g_oled_ready) return;
-
-    if (y < 0 || y >= 128 || w <= 0) return;
-    if (x < 0) { w += x; x = 0; }
-    if ((x + w) > 128) w = 128 - x;
-    if (w <= 0) return;
-
-    setWindow(x, y, x + w - 1, y);
-
-    OLED_DC_Data();
-    OLED_CS_Low();
-    for (i = 0; i < w; i++) {
-        if (!OLED_SPI_Write8((unsigned char)(color >> 8)) ||
-            !OLED_SPI_Write8((unsigned char)(color & 0xFF))) {
-            g_oled_ready = 0;
-            OLED_CS_High();
-            return;
-        }
-    }
-    OLED_CS_High();
-}
-
-void drawFastVLine(int x, int y, int h, unsigned int color)
-{
-    int i;
-    if (!g_oled_ready) return;
-
-    if (x < 0 || x >= 128 || h <= 0) return;
-    if (y < 0) { h += y; y = 0; }
-    if ((y + h) > 128) h = 128 - y;
-    if (h <= 0) return;
-
-    setWindow(x, y, x, y + h - 1);
-
-    OLED_DC_Data();
-    OLED_CS_Low();
-    for (i = 0; i < h; i++) {
-        if (!OLED_SPI_Write8((unsigned char)(color >> 8)) ||
-            !OLED_SPI_Write8((unsigned char)(color & 0xFF))) {
-            g_oled_ready = 0;
-            OLED_CS_High();
-            return;
-        }
-    }
-    OLED_CS_High();
-}
-
-void fillRect(unsigned int x0, unsigned int y0, unsigned int w, unsigned int h, unsigned int color)
-{
-    unsigned int x;
-    unsigned int y;
-    if (!g_oled_ready) return;
-
-    if (w == 0 || h == 0) return;
-    if (x0 >= 128 || y0 >= 128) return;
-
-    if ((x0 + w) > 128U) w = 128U - x0;
-    if ((y0 + h) > 128U) h = 128U - y0;
-    if (w == 0 || h == 0) return;
-
-    setWindow((int)x0, (int)y0, (int)(x0 + w - 1U), (int)(y0 + h - 1U));
-
-    OLED_DC_Data();
-    OLED_CS_Low();
-    for (y = 0; y < h; y++) {
-        for (x = 0; x < w; x++) {
-            if (!OLED_SPI_Write8((unsigned char)(color >> 8)) ||
-                !OLED_SPI_Write8((unsigned char)(color & 0xFF))) {
-                g_oled_ready = 0;
-                OLED_CS_High();
-                return;
-            }
-        }
-    }
-    OLED_CS_High();
-}
