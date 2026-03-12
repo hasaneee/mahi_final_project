@@ -53,11 +53,11 @@ void writeCommand(unsigned char c) {
 /* Write a function to send a command byte c to the OLED via
 *  SPI.
 */
-    //Set command line (set DC pin to low)
+    // Set command line (DC low): PIN_45 -> GPIOA3 bit 0x80
     GPIOPinWrite(GPIOA3_BASE, 0x80, 0x00);
 
-    //Enable chip select by pulling the OLEDCS pin low
-    GPIOPinWrite(GPIOA0_BASE,0x80, 0x00);
+    // Enable chip select by pulling CS low: PIN_18 -> GPIOA3 bit 0x10
+    GPIOPinWrite(GPIOA3_BASE, 0x10, 0x00);
 
     //Enable SPI chip select
     MAP_SPICSEnable(GSPI_BASE);
@@ -65,8 +65,8 @@ void writeCommand(unsigned char c) {
     // Push command byte, but avoid hanging forever if SPI is misconfigured.
     (void)SPITransferByte(c);
 
-    //Disable chip select when done by pulling OLEDCS high
-    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x80);
+    // Disable chip select when done by pulling CS high
+    GPIOPinWrite(GPIOA3_BASE, 0x10, 0x10);
 }
 //*****************************************************************************
 
@@ -79,8 +79,8 @@ void writeData(unsigned char c) {
     //Set data line (set DC pin to high)
     GPIOPinWrite(GPIOA3_BASE, 0x80, 0x80); // DC high for data
 
-    //Enable chip select by pulling the OLEDCS pin low
-    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x00);
+    // Enable chip select by pulling CS low: PIN_18 -> GPIOA3 bit 0x10
+    GPIOPinWrite(GPIOA3_BASE, 0x10, 0x00);
 
     //Enable SPI chip select
     MAP_SPICSEnable(GSPI_BASE);
@@ -88,28 +88,25 @@ void writeData(unsigned char c) {
     // Push data byte, but avoid hanging forever if SPI is misconfigured.
     (void)SPITransferByte(c);
 
-    //Disable chip select when done by pulling OLEDCS high
-    GPIOPinWrite(GPIOA0_BASE, 0x80, 0x80);
+    // Disable chip select when done by pulling CS high
+    GPIOPinWrite(GPIOA3_BASE, 0x10, 0x10);
 }
 
 //*****************************************************************************
 void Adafruit_Init(void){
 
 //TODO 3
-/* NOTE: This function assumes that the RESET pin of the 
-*  OLED has been wired to GPIO28, pin 18 (P2.2). If you 
-*  use a different pin for the OLED reset, then you should
-*  update the GPIOPinWrite commands below that set RESET 
-*  high or low.
+/* NOTE: Reset is mapped to PIN_08 -> GPIOA2 bit 0x02.
+*  If wiring changes, update the GPIOPinWrite commands below.
 */
 
   volatile unsigned long delay;
 
-  GPIOPinWrite(GPIOA1_BASE, 0x1, 0x00); // RESET = RESET_LOW
+  GPIOPinWrite(GPIOA2_BASE, 0x02, 0x00); // RESET low
 
   for(delay=0; delay<100; delay=delay+1);// delay minimum 100 ns
 
-  GPIOPinWrite(GPIOA1_BASE, 0x1, 0x1);  // RESET = RESET_HIGH
+  GPIOPinWrite(GPIOA2_BASE, 0x02, 0x02);  // RESET high
 
     // Initialization Sequence
   writeCommand(SSD1351_CMD_COMMANDLOCK);  // set command lock
@@ -342,4 +339,3 @@ void  invert(char v) {
         writeCommand(SSD1351_CMD_NORMALDISPLAY);
    }
  }
-

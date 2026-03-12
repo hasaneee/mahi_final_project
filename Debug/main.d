@@ -16,6 +16,7 @@ main.obj: C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/sys/_st
 main.obj: C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/stdbool.h
 main.obj: C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/string.h
 main.obj: C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/xlocale/_string.h
+main.obj: C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/stdlib.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/simplelink/include/simplelink.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/simplelink/user.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/simplelink/cc_pal.h
@@ -34,6 +35,7 @@ main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/simplelink/source/nonos.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_types.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_ints.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_memmap.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_nvic.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/rom.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/rom_map.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/rom_patch.h
@@ -41,14 +43,18 @@ main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/interrupt.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/prcm.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/utils.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/uart.h
-main.obj: ../pinmux.h
-main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/gpio_if.h
-main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/common.h
-main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/uart_if.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/i2c.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_i2c.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/gpio.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/timer.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/spi.h
 main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/pin.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/systick.h
+main.obj: ../pinmux.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/gpio_if.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/common.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/uart_if.h
+main.obj: C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/i2c_if.h
 main.obj: ../Adafruit_GFX.h
 main.obj: ../Adafruit_SSD1351.h
 main.obj: ../utils/network_utils.h
@@ -84,6 +90,8 @@ C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/stdbool.h:
 C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/string.h:
 
 C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/xlocale/_string.h:
+
+C:/ti/ccs1250/ccs/tools/compiler/ti-cgt-arm_20.2.7.LTS/include/stdlib.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/simplelink/include/simplelink.h:
 
@@ -121,6 +129,8 @@ C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_ints.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_memmap.h:
 
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_nvic.h:
+
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/rom.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/rom_map.h:
@@ -135,13 +145,9 @@ C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/utils.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/uart.h:
 
-../pinmux.h:
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/i2c.h:
 
-C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/gpio_if.h:
-
-C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/common.h:
-
-C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/uart_if.h:
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/inc/hw_i2c.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/gpio.h:
 
@@ -150,6 +156,18 @@ C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/timer.h:
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/spi.h:
 
 C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/pin.h:
+
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/driverlib/systick.h:
+
+../pinmux.h:
+
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/gpio_if.h:
+
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/common.h:
+
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/uart_if.h:
+
+C:/ti/CC3200SDK_1.5.0/cc3200-sdk/example/common/i2c_if.h:
 
 ../Adafruit_GFX.h:
 
